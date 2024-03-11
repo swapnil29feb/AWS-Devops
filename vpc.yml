@@ -1,0 +1,157 @@
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+  
+  SecurityGroupDescription:
+    Description: Security Group Description
+    Type: String
+
+Resources:
+  MyProjectVPC: 
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+       - Key: Name
+         Value: !Ref EnvironmentName
+  
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyProjectVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.50.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet (AZ1)
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyProjectVPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.0.60.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+  
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref MyProjectVPC
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyProjectVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Routes
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyProjectVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Routes
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet
+
+
+  MyPublicInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: ap-south-1a
+      ImageId: ami-0ba259e664698cbfc
+      InstanceType: t2.micro
+      # SubnetId: !Ref PublicSubnet
+      SecurityGroups:
+        - !Ref SSHSecurityGroup
+        - !Ref ServerSecurityGroup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          sudo su -
+          yum update -y
+          yum install httpd -y
+          systemctl start httpd.service
+          systemctl enable httpd.service
+          # hostname >> /var/www/html/index.html
+          echo "<html><body><h1>Hello, welcome $(hostname)<h1></body></html>" > /var/www/html/index.html
+
+  MyPrivateInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: ap-south-1b
+      ImageId: ami-0ba259e664698cbfc
+      InstanceType: t2.micro
+      SubnetId: !Ref PrivateSubnet
+
+  # our EC2 security group
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+
+  # our second EC2 security group
+  ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Ref SecurityGroupDescription
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref MyProjectVPC
+
+  PublicSubnetCidr:
+    Description: CIDR block for the public subnet
+    Value: !GetAtt PublicSubnet.CidrBlock
+  
+  PrivateSubnetCidr:
+    Description: CIDR block for the private subnet
+    Value: !GetAtt PrivateSubnet.CidrBlock
+  
+  PublicIp:
+    Description: Ec2 Instance Public IP
+    Value: !GetAtt MyPublicInstance.PublicIp
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicIp"
